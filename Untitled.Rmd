@@ -1,0 +1,128 @@
+---
+title: "Harvard Campaign Donations by Quarter"
+author: "Albert Shin"
+date: "4/10/2019"
+output: html_document
+---
+
+```{r packages, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+library(stringr)
+```
+Using data from the Federal Election Commission, I show the total amount donated to political candidates by Harvard University affiliates, and how much of those donations per quarter went to each political party.
+
+```{r setup, echo=FALSE, message=FALSE}
+# cache=TRUE caches this code chunk
+# Download file from the url, create a destination file called "file.zip". 
+# write = "wb" is an argument for Windows computers so that the file is opened for writing in binary mode
+download.file(url = "https://www.fec.gov/files/bulk-downloads/2006/weball06.zip", destfile = "file.zip", write = "wb")
+# read_delim to read in the file, delim = "|", because if you look at the document, the values are separated by a "|" character
+# col_names = FALSE because the data does not come with column names. Escape_double = FALSE because the file does not escape quotes by doubling them. 
+ps5 <- read_delim("file.zip", delim = "|", col_names = FALSE, escape_double = FALSE) %>% 
+# select the variables we need: candidate id, candidate name, party, ending cash, and candidate state
+  select(X1, X2, X5, X11, X19)
+# rename the columns to identifying column titles using colnames
+colnames(ps5) <- c("cand_id", "cand_name", "party", "cash", "cand_state")
+# use fs::file_delete("file.zip") to delete the downloaded file
+fs::file_delete("file.zip")
+
+# Download the file from the url, with a destination file called "file4.zip"
+# write = "wb" is an argument for Windows computers so that the file is opened for writing in binary mode
+download.file(url = "https://www.fec.gov/files/bulk-downloads/2006/indiv06.zip", destfile = "file4.zip", write = "wb")
+# read_delim to read in the file, delim = "|", because if you look at the document, the values are separated by a "|" character
+# col_names = FALSE because the data does not come with column names. Escape_double = FALSE because the file does not escape quotes by doubling them.
+itcont <- read_delim("file4.zip", delim = "|", col_names = FALSE, escape_double = FALSE, guess_max = 100000) %>%
+# select the necessary variables as outlined in the assignment
+  select(X1, X12, X13, X14, X15, X16)
+# rename the columns to provide more descriptive column names
+colnames(itcont) <- c("cmte_id", "employer", "occupation", "transaction_dt", "amount", "cand_id")
+# Delete the downloaded file
+fs::file_delete("file4.zip")
+
+# Download the 2005-2006 Committee Master data, and create a destination file called "file3.zip". 
+# write = "wb" is an argument for Windows computers so that the file is opened for writing in binary mode
+download.file(url = "https://www.fec.gov/files/bulk-downloads/2006/cm06.zip", destfile = "file3.zip", write = "wb")
+# read_delim to read in the file, delim = "|", because if you look at the document, the values are separated by a "|" character
+# col_names = FALSE because the data does not come with column names. Escape_double = FALSE because the file does not escape quotes by doubling them. 
+cm <- read_delim("file3.zip", delim = "|", col_names = FALSE, escape_double = FALSE) %>% 
+# Select the committee id, committee party, and candidate id
+  select(X1, X11, X15) %>%
+# change the committee party values to lowercase
+  mutate(X11 = str_to_lower(X11))
+# change the column names to descriptive names
+colnames(cm) <- c("cmte_id", "cmte_party", "cand_id")
+
+# delete file, now that we have the data we need from it
+fs::file_delete("file3.zip")
+
+cmedit <- cm %>% 
+  # mutate using case_when to provide replacement names for the values of cmte_party
+  mutate(cmte_party = case_when(cmte_party == "dem" ~ "Democrat", 
+                                cmte_party == "rep" ~ "Republican",
+                                # Other is for all other values (including NA values)
+                                TRUE ~ "Other")) %>% 
+  # fct_relevel relevel the factors manually to Democrat, Republican, and Other
+  mutate(cmte_party = fct_relevel(cmte_party, c("Democrat", "Republican", "Other"))) %>% 
+  # Group by committee party (by Democrat, Republican, and Other)
+  group_by(cmte_party) %>% 
+  # Count the number of unique candidate and committee ID's for each political party 
+  summarize(cand_id = n_distinct(cand_id), cmte_id = n_distinct(cmte_id))
+
+# Join the data in ps5 to cm by matching the candidate id
+q4_1 <- left_join(cm, ps5, by = "cand_id")
+# Join the data in itcont to q4_1 (which is the data we just combined from  above) by committee id
+q4_2 <- left_join(q4_1, itcont, by = "cmte_id")
+
+editedq4_2 <- q4_2 %>%
+  # Filter for donors whose employer is Harvard University
+  filter(employer == "HARVARD UNIVERSITY") %>% 
+  # Write rds file for the graphic (ps_5_graphic.Rmd), saving a tibble that we can use for the graphic
+  write_rds("saved_file.rds")
+```
+
+
+```{r graph, echo=FALSE, message=FALSE}
+# Reading the written .rds file into the variable q5
+q5 <-read_rds("saved_file.rds")
+
+q5 %>% 
+# Mutating the data type in transaction_date from character to date so we can work with date values
+  mutate(transaction_dt = mdy(transaction_dt)) %>%
+# Using floor_date to "round down" to the nearest quarter date
+  mutate(transaction_dt = floor_date(transaction_dt, unit = "quarter")) %>%
+# Filter out the rows that have "NA" as the party value, as we want to see the party represented as a fill on the final graph
+  filter(!is.na(party)) %>% 
+# Group by transaction date, so that we can present the donations per quarter
+  group_by(transaction_dt) %>% 
+# Mutate amount to the total number of dollars donated
+  mutate(amount = sum(amount)) %>%
+# rename the values of party using case_when (there are only "DEM", "IND", and "REP" values)
+  mutate(party = case_when(party == "DEM" ~ "Democrat",
+                         party == "REP" ~ "Republican", 
+                         party == "IND" ~ "Independent")) %>%
+# Create a bar graph with the x-axis having the transaction date (by quarter) and the y-axis having the total amount donated. Fill = party fills the bars with the proportion of donations that went to each party. 
+  ggplot(aes(x = transaction_dt, y = amount, fill = party)) +
+# scale_y_continuous allows for custom formatted breaks on the y-axis. I changed the formatting of the axes to display money amounts in millions. 
+    scale_y_continuous(breaks = seq(0, 3000000, by = 1000000),
+                     label = c("$0", "$1 million", "$2 million", "$3 million")) +
+  # geom_col() for a bar graph
+  geom_col() + 
+  # Y axis label that reflects the total amount of money donated in a quarter
+  ylab(label = "Total Donation Amount") +
+  # X axis label that shows the quarter donated
+  xlab(label = "Date Donated (by quarter)") + 
+  # Title, subtitle, and legend labels
+  labs(
+    # Title label
+    title = "Total Donation Amount by Quarter, 2005-2006",
+    # Subtitle Label (because we filtered for those whose "Employer" was Harvard University)
+    subtitle = "Donations By Harvard University Affiliates",
+    # Change the legend title to "Political Party" for aesthetic purposes
+    fill = "Political Party",
+    # Caption displays the source at the bottom 
+    caption = "Source: Federal Election Commission"
+  )
+```
