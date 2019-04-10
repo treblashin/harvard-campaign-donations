@@ -88,6 +88,8 @@ editedq4_2 <- q4_2 %>%
 # Reading the written .rds file into the variable q5
 q5 <-read_rds("saved_file.rds")
 
+fs::file_delete("saved_file.rds")
+
 q5 %>% 
 # Mutating the data type in transaction_date from character to date so we can work with date values
   mutate(transaction_dt = mdy(transaction_dt)) %>%
